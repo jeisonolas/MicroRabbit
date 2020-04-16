@@ -2,6 +2,7 @@
 using MicroRabbit.Domain.Core.Bus;
 using MicroRabbit.Domain.Core.Commands;
 using MicroRabbit.Domain.Core.Events;
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -16,12 +17,14 @@ namespace MicroRabbit.Infra.Bus
     public sealed class RabbitMQBus : IEventBus
     {
         private readonly IMediator _mediator;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly Dictionary<string, List<Type>> _handlers;
         private readonly List<Type> _eventTypes;
 
-        public RabbitMQBus(IMediator mediator)
+        public RabbitMQBus(IMediator mediator,IServiceScopeFactory serviceScopeFactory)
         {
             _mediator = mediator;
+            _serviceScopeFactory = serviceScopeFactory;
             _handlers = new Dictionary<string, List<Type>>();
             _eventTypes = new List<Type>();
         }
@@ -85,18 +88,17 @@ namespace MicroRabbit.Infra.Bus
             factory.HostName = "localhost";
             factory.DispatchConsumersAsync = true;
 
-            using(var connection=factory.CreateConnection())
-            {
-                using(var channel=connection.CreateModel())
-                {
-                    var eventName = typeof(T).Name;
+            var connection = factory.CreateConnection();
+            var channel = connection.CreateModel();
+                
+            var eventName = typeof(T).Name;
 
-                    var consumer = new AsyncEventingBasicConsumer(channel);
-                    consumer.Received += Consumer_Received;
+            channel.QueueDeclare(eventName, false, false, false, null);
 
-                    channel.BasicConsume(eventName, true, consumer);
-                }    
-            }
+            var consumer = new AsyncEventingBasicConsumer(channel);
+            consumer.Received += Consumer_Received;
+
+            channel.BasicConsume(eventName, true, consumer);
         }
 
         private async Task Consumer_Received(object sender, BasicDeliverEventArgs e)
@@ -116,26 +118,30 @@ namespace MicroRabbit.Infra.Bus
 
         private async Task ProcessEvent(string eventName, string message)
         {
-            if(_handlers.ContainsKey(eventName))
+            using(var scope=_serviceScopeFactory.CreateScope())
             {
-                var subscriptions = _handlers[eventName];
-
-                foreach(var subscription in subscriptions)
+                if (_handlers.ContainsKey(eventName))
                 {
-                    var handler = Activator.CreateInstance(subscription);
+                    var subscriptions = _handlers[eventName];
 
-                    if (handler == null)
+                    foreach (var subscription in subscriptions)
                     {
-                        continue;
+                        var handler = scope.ServiceProvider.GetService(subscription);
+
+                        if (handler == null)
+                        {
+                            continue;
+                        }
+
+                        var eventType = _eventTypes.SingleOrDefault(x => x.Name == eventName);
+                        var @event = JsonConvert.DeserializeObject(message, eventType);
+                        var concreteType = typeof(IEventHandler<>).MakeGenericType(eventType);
+
+                        await (Task)concreteType.GetMethod("Handle").Invoke(handler, new object[] { @event });
                     }
-
-                    var eventType = _eventTypes.SingleOrDefault(x => x.Name == eventName);
-                    var @event = JsonConvert.DeserializeObject(message, eventType);
-                    var concreteType = typeof(IEventHandler<>).MakeGenericType(eventType);
-
-                    await (Task)concreteType.GetMethod("Handle").Invoke(handler, new object[] { @event });
                 }
             }
+
         }
     }
 }
