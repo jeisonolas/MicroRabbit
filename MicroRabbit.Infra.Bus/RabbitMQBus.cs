@@ -21,7 +21,7 @@ namespace MicroRabbit.Infra.Bus
         private readonly Dictionary<string, List<Type>> _handlers;
         private readonly List<Type> _eventTypes;
 
-        public RabbitMQBus(IMediator mediator,IServiceScopeFactory serviceScopeFactory)
+        public RabbitMQBus(IMediator mediator, IServiceScopeFactory serviceScopeFactory)
         {
             _mediator = mediator;
             _serviceScopeFactory = serviceScopeFactory;
@@ -38,9 +38,9 @@ namespace MicroRabbit.Infra.Bus
             var factory = new ConnectionFactory();
             factory.HostName = "localhost";
 
-            using(var connection = factory.CreateConnection())
+            using (var connection = factory.CreateConnection())
             {
-                using(var channel = connection.CreateModel())
+                using (var channel = connection.CreateModel())
                 {
                     var eventName = @event.GetType().Name;
 
@@ -50,7 +50,7 @@ namespace MicroRabbit.Infra.Bus
                     var body = Encoding.UTF8.GetBytes(message);
 
                     channel.BasicPublish("", eventName, null, body);
-                }    
+                }
             }
         }
 
@@ -61,19 +61,19 @@ namespace MicroRabbit.Infra.Bus
             var eventName = typeof(T).Name;
             var handlerType = typeof(TH);
 
-            if(!_eventTypes.Contains(typeof(T)))
+            if (!_eventTypes.Contains(typeof(T)))
             {
                 _eventTypes.Add(typeof(T));
             }
 
-            if(!_handlers.ContainsKey(eventName))
+            if (!_handlers.ContainsKey(eventName))
             {
                 _handlers.Add(eventName, new List<Type>());
             }
 
-            if(_handlers[eventName].Any(x => x.GetType() == handlerType))
+            if (_handlers[eventName].Any(x => x.GetType() == handlerType))
             {
-                throw new ArgumentException (
+                throw new ArgumentException(
                     $"Handler Type {handlerType.Name} already is registered for '{eventName}'", nameof(handlerType));
             }
 
@@ -90,7 +90,7 @@ namespace MicroRabbit.Infra.Bus
 
             var connection = factory.CreateConnection();
             var channel = connection.CreateModel();
-                
+
             var eventName = typeof(T).Name;
 
             channel.QueueDeclare(eventName, false, false, false, null);
@@ -110,7 +110,7 @@ namespace MicroRabbit.Infra.Bus
             {
                 await ProcessEvent(eventName, message).ConfigureAwait(false);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
 
             }
@@ -118,9 +118,10 @@ namespace MicroRabbit.Infra.Bus
 
         private async Task ProcessEvent(string eventName, string message)
         {
-            using(var scope=_serviceScopeFactory.CreateScope())
+            if (_handlers.ContainsKey(eventName))
             {
-                if (_handlers.ContainsKey(eventName))
+
+                using (var scope = _serviceScopeFactory.CreateScope())
                 {
                     var subscriptions = _handlers[eventName];
 
@@ -141,7 +142,6 @@ namespace MicroRabbit.Infra.Bus
                     }
                 }
             }
-
         }
     }
 }
